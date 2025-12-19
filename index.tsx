@@ -55,13 +55,14 @@ class App {
 
   private async startOutlineGeneration(topic: string) {
     if (!topic.trim()) return;
-    this.setState({ topic, isLoading: true, loadingStep: '構成を作成中...' });
+    const msg = this.state.language === Language.JAPANESE ? '構成を作成中...' : 'Generating outline...';
+    this.setState({ topic, step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
     try {
       const outline = await this.service.generateOutline(topic, this.state.language);
-      this.setState({ outline, step: 'outline', isLoading: false });
+      this.setState({ outline, step: 'outline', isLoading: false, loadingStep: '' });
     } catch (err) {
       alert('Error generating outline.');
-      this.setState({ isLoading: false });
+      this.setState({ step: 'input', isLoading: false, loadingStep: '' });
     }
   }
 
@@ -133,7 +134,7 @@ class App {
     form.innerHTML = `
       <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${this.state.language === Language.JAPANESE ? 'トピックを入力 (例: 最新の宇宙探査...)' : 'Enter topic (e.g., Space Exploration...)'}" class="w-full glass-card rounded-2xl py-6 pl-8 pr-40 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-lg shadow-xl" />
       <button type="submit" id="submit-btn" class="absolute right-3 top-3 bottom-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold px-8 rounded-xl shadow-lg hover:scale-105 transition-all">
-        ${this.state.isLoading ? '...' : (this.state.language === Language.JAPANESE ? '構成を作成' : 'Create Outline')}
+        ${this.state.language === Language.JAPANESE ? '構成を作成' : 'Create Outline'}
       </button>
     `;
     form.addEventListener('submit', async (e) => {
@@ -192,13 +193,11 @@ class App {
     `;
     div.querySelector('#back-btn')!.addEventListener('click', () => this.setState({ step: 'input' }));
     div.querySelector('#re-out-btn')!.addEventListener('click', () => {
-      this.setState({ isLoading: true, loadingStep: '再構成中...' });
-      this.service.generateOutline(this.state.topic, this.state.language).then(outline => {
-        this.setState({ outline, isLoading: false });
-      });
+      this.startOutlineGeneration(this.state.topic);
     });
     div.querySelector('#gen-btn')!.addEventListener('click', async () => {
-      this.setState({ step: 'generating', isLoading: true, progress: 0 });
+      const msg = this.state.language === Language.JAPANESE ? '音声生成中...' : 'Generating audio...';
+      this.setState({ step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
       try {
         const { transcript, sources } = await this.service.generateScript(this.state.topic, this.state.outline, this.state.language);
         const audioChunks = await this.service.generateAudioInChunks(transcript, (p) => this.setState({ progress: p }));
@@ -223,11 +222,12 @@ class App {
             sources,
             audioUrl
           },
-          isLoading: false
+          isLoading: false,
+          loadingStep: ''
         });
       } catch (err) {
         alert('Generation failed');
-        this.setState({ step: 'outline', isLoading: false });
+        this.setState({ step: 'outline', isLoading: false, loadingStep: '' });
       }
     });
     return div;
@@ -235,13 +235,16 @@ class App {
 
   private renderGeneratingStep() {
     const div = document.createElement('div');
-    div.className = 'flex flex-col items-center py-20';
+    div.className = 'flex flex-col items-center py-20 animate-in fade-in duration-500';
     div.innerHTML = `
       <div class="w-20 h-20 mb-8 relative border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
-      <p class="text-xl font-bold text-blue-400 mb-2 animate-pulse">Generating Audio...</p>
-      <div class="w-full max-w-md bg-white/5 rounded-full h-2 overflow-hidden border border-white/10 mt-4">
-        <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-500" style="width: ${this.state.progress}%"></div>
-      </div>
+      <p class="text-xl font-bold text-blue-400 mb-2 animate-pulse">${this.state.loadingStep}</p>
+      ${this.state.progress > 0 ? `
+        <div class="w-full max-w-md bg-white/5 rounded-full h-2 overflow-hidden border border-white/10 mt-4">
+          <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" style="width: ${this.state.progress}%"></div>
+        </div>
+        <p class="mt-4 text-[10px] text-slate-500 uppercase tracking-widest">${this.state.progress}% Complete</p>
+      ` : ''}
     `;
     return div;
   }
