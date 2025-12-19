@@ -15,20 +15,21 @@ class App {
     loadingStep: string;
     progress: number;
     session: any | null;
+    selectedGenre: string | null;
+    genreTopics: string[];
+    isGenreLoading: boolean;
   };
 
-  private suggestedTopics = {
+  private genres = {
     [Language.JAPANESE]: [
-      "量子コンピュータの未来", "コーヒーの歴史と文化", "火星移住計画の現実味",
-      "深海生物の謎", "マインドフルネスの科学", "古代シルクロードの冒険",
-      "最新のAIと芸術の融合", "サステナブルな建築デザイン", "江戸時代の食生活",
-      "ビデオゲームの進化史", "遺伝子編集技術CRISPR", "都市伝説の心理学"
+      "科学", "歴史", "生物", "地理", "海洋", "宇宙", "工学", "食べ物", "文化", "遊び",
+      "心理学", "経済", "建築", "哲学", "音楽", "映画", "スポーツ", "医療", "環境", "言語",
+      "宗教", "政治", "社会", "神話", "芸術", "ファッション", "テクノロジー", "文学", "都市", "教育"
     ],
     [Language.ENGLISH]: [
-      "The Future of Quantum Computing", "History and Culture of Coffee", "Reality of Mars Colonization",
-      "Mysteries of Deep Sea Creatures", "Science of Mindfulness", "Adventures on the Silk Road",
-      "AI and Art Integration", "Sustainable Architecture", "Daily Life in Edo Period",
-      "Evolution of Video Games", "CRISPR Gene Editing", "Psychology of Urban Legends"
+      "Science", "History", "Biology", "Geography", "Oceanography", "Space", "Engineering", "Food", "Culture", "Games",
+      "Psychology", "Economics", "Architecture", "Philosophy", "Music", "Movies", "Sports", "Medicine", "Environment", "Language",
+      "Religion", "Politics", "Society", "Mythology", "Art", "Fashion", "Technology", "Literature", "Urban Studies", "Education"
     ]
   };
 
@@ -43,7 +44,10 @@ class App {
       isLoading: false,
       loadingStep: '',
       progress: 0,
-      session: null
+      session: null,
+      selectedGenre: null,
+      genreTopics: [],
+      isGenreLoading: false
     };
     this.render();
   }
@@ -51,6 +55,17 @@ class App {
   private setState(newState: Partial<typeof this.state>) {
     this.state = { ...this.state, ...newState };
     this.render();
+  }
+
+  private async fetchTopicsForGenre(genre: string) {
+    this.setState({ selectedGenre: genre, isGenreLoading: true, genreTopics: [] });
+    try {
+      const topics = await this.service.getTopicsByGenre(genre, this.state.language);
+      this.setState({ genreTopics: topics, isGenreLoading: false });
+    } catch (err) {
+      alert("Failed to fetch topics.");
+      this.setState({ isGenreLoading: false });
+    }
   }
 
   private async startOutlineGeneration(topic: string) {
@@ -63,6 +78,18 @@ class App {
     } catch (err) {
       alert('Error generating outline.');
       this.setState({ step: 'input', isLoading: false, loadingStep: '' });
+    }
+  }
+
+  private async extendOutline() {
+    const msg = this.state.language === Language.JAPANESE ? '項目を追加中...' : 'Adding more points...';
+    this.setState({ step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
+    try {
+      const moreItems = await this.service.extendOutline(this.state.topic, this.state.outline, this.state.language);
+      this.setState({ outline: [...this.state.outline, ...moreItems], step: 'outline', isLoading: false, loadingStep: '' });
+    } catch (err) {
+      alert('Error extending outline.');
+      this.setState({ step: 'outline', isLoading: false, loadingStep: '' });
     }
   }
 
@@ -81,8 +108,8 @@ class App {
       </h1>
       <p class="text-slate-400 max-w-xl mx-auto text-sm">
         ${this.state.language === Language.JAPANESE 
-          ? '聞き手役のJoe（好奇心旺盛）と解説役のJane（専門家）による深掘り対談。' 
-          : 'Deep dive discussion between Joe (Curious Novice) and Jane (Expert Explainer).'}
+          ? 'Joe（聞き手）とJane（解説者）による、深く鋭いポッドキャスト生成ツール。' 
+          : 'Detailed podcast discussions between Joe and Jane.'}
       </p>
     `;
     this.container.appendChild(header);
@@ -118,6 +145,8 @@ class App {
     const div = document.createElement('div');
     div.className = 'flex flex-col items-center';
     
+    const isJP = this.state.language === Language.JAPANESE;
+
     // Lang Switcher
     const langDiv = document.createElement('div');
     langDiv.className = 'flex gap-2 justify-center mb-8 bg-white/5 p-1 rounded-xl border border-white/10 w-fit mx-auto';
@@ -125,16 +154,16 @@ class App {
       <button id="btn-ja" class="px-4 py-2 rounded-lg text-xs font-bold transition-all ${this.state.language === Language.JAPANESE ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}">日本語</button>
       <button id="btn-en" class="px-4 py-2 rounded-lg text-xs font-bold transition-all ${this.state.language === Language.ENGLISH ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}">English</button>
     `;
-    langDiv.querySelector('#btn-ja')!.addEventListener('click', () => this.setState({ language: Language.JAPANESE }));
-    langDiv.querySelector('#btn-en')!.addEventListener('click', () => this.setState({ language: Language.ENGLISH }));
+    langDiv.querySelector('#btn-ja')!.addEventListener('click', () => this.setState({ language: Language.JAPANESE, selectedGenre: null, genreTopics: [] }));
+    langDiv.querySelector('#btn-en')!.addEventListener('click', () => this.setState({ language: Language.ENGLISH, selectedGenre: null, genreTopics: [] }));
     div.appendChild(langDiv);
 
     const form = document.createElement('form');
     form.className = 'relative group w-full mb-12';
     form.innerHTML = `
-      <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${this.state.language === Language.JAPANESE ? 'トピックを入力 (例: 最新の宇宙探査...)' : 'Enter topic (e.g., Space Exploration...)'}" class="w-full glass-card rounded-2xl py-6 pl-8 pr-40 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-lg shadow-xl" />
+      <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${isJP ? 'トピックを入力またはジャンルから選択...' : 'Enter topic or select genre...'}" class="w-full glass-card rounded-2xl py-6 pl-8 pr-40 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-lg shadow-xl" />
       <button type="submit" id="submit-btn" class="absolute right-3 top-3 bottom-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold px-8 rounded-xl shadow-lg hover:scale-105 transition-all">
-        ${this.state.language === Language.JAPANESE ? '構成を作成' : 'Create Outline'}
+        ${isJP ? '構成を作成' : 'Create Outline'}
       </button>
     `;
     form.addEventListener('submit', async (e) => {
@@ -144,59 +173,125 @@ class App {
     });
     div.appendChild(form);
 
-    // Suggested Topics Section
-    const suggestContainer = document.createElement('div');
-    suggestContainer.className = 'w-full';
-    suggestContainer.innerHTML = `
-      <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 text-center">
-        ${this.state.language === Language.JAPANESE ? 'おすすめのトピック' : 'Suggested Topics'}
+    // Genre Selector
+    const genreContainer = document.createElement('div');
+    genreContainer.className = 'w-full mb-10';
+    genreContainer.innerHTML = `
+      <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-6 text-center">
+        ${isJP ? 'ジャンルからトピックを探す' : 'Discover Topics by Genre'}
       </h3>
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        ${this.suggestedTopics[this.state.language].map(t => `
-          <button class="topic-chip glass-card px-4 py-3 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:border-blue-500/50 hover:bg-white/5 transition-all text-left truncate" data-topic="${t}">
-            ${t}
+      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-10 gap-2 mb-8">
+        ${this.genres[this.state.language].map(g => `
+          <button class="genre-btn px-2 py-3 rounded-lg text-[10px] font-bold border transition-all ${this.state.selectedGenre === g ? 'bg-blue-600 border-blue-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20 hover:text-white'}" data-genre="${g}">
+            ${g}
           </button>
         `).join('')}
       </div>
     `;
-    suggestContainer.querySelectorAll('.topic-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const t = (btn as HTMLElement).dataset.topic;
-        if (t) this.startOutlineGeneration(t);
-      });
+    genreContainer.querySelectorAll('.genre-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.fetchTopicsForGenre((btn as HTMLElement).dataset.genre!));
     });
-    div.appendChild(suggestContainer);
+    div.appendChild(genreContainer);
+
+    // Dynamic Topic Suggestions
+    if (this.state.selectedGenre) {
+      const topicsDiv = document.createElement('div');
+      topicsDiv.className = 'w-full glass-card rounded-2xl p-6 border border-blue-500/20 animate-in slide-in-from-top-4 duration-500';
+      topicsDiv.innerHTML = `
+        <div class="flex items-center justify-between mb-4">
+          <h4 class="text-sm font-bold text-blue-400 uppercase tracking-widest">
+            ${this.state.selectedGenre} のおすすめ
+          </h4>
+          ${this.state.isGenreLoading ? '<div class="w-4 h-4 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>' : ''}
+        </div>
+        <div class="space-y-2">
+          ${this.state.genreTopics.map(t => `
+            <button class="topic-suggestion w-full text-left px-4 py-3 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 hover:border-blue-500/30 text-sm text-slate-300 transition-all" data-topic="${t}">
+              ${t}
+            </button>
+          `).join('')}
+        </div>
+      `;
+      topicsDiv.querySelectorAll('.topic-suggestion').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const t = (btn as HTMLElement).dataset.topic!;
+          this.setState({ topic: t });
+          (form.querySelector('#topic-input') as HTMLInputElement).value = t;
+        });
+      });
+      div.appendChild(topicsDiv);
+    }
 
     return div;
   }
 
   private renderOutlineStep() {
     const div = document.createElement('div');
-    div.className = 'glass-card rounded-3xl p-8 shadow-2xl border border-white/10';
+    div.className = 'glass-card rounded-3xl p-8 shadow-2xl border border-white/10 max-h-[80vh] flex flex-col';
+    
+    const isJP = this.state.language === Language.JAPANESE;
+    
     div.innerHTML = `
-      <div class="flex items-center justify-between mb-6 border-b border-white/10 pb-4">
-        <h2 class="text-xl font-bold text-white">Proposed Outline</h2>
-        <button id="back-btn" class="text-xs text-slate-400 hover:text-white">Back</button>
+      <div class="flex items-center justify-between mb-6 border-b border-white/10 pb-4 flex-shrink-0">
+        <h2 class="text-xl font-bold text-white">${isJP ? '番組構成案' : 'Proposed Outline'}</h2>
+        <button id="back-btn" class="text-xs text-slate-400 hover:text-white">${isJP ? '戻る' : 'Back'}</button>
       </div>
-      <ul class="space-y-4 mb-10">
-        ${this.state.outline.map((item, i) => `
-          <li class="flex items-start gap-4 p-4 rounded-xl bg-white/5 border border-white/5">
-            <span class="text-blue-500 font-bold">${i + 1}.</span>
-            <p class="text-slate-200">${item}</p>
-          </li>
-        `).join('')}
-      </ul>
-      <div class="flex flex-col sm:flex-row gap-4">
-        <button id="gen-btn" class="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg">Generate Podcast</button>
-        <button id="re-out-btn" class="px-8 py-4 bg-white/5 text-white font-bold rounded-xl border border-white/10">Regenerate Outline</button>
+      <div class="overflow-y-auto flex-grow pr-2 custom-scrollbar mb-8">
+        <ul id="outline-list" class="space-y-4">
+          ${this.state.outline.map((item, i) => `
+            <li class="flex items-start gap-4 p-4 rounded-xl bg-white/5 border border-white/5 group relative transition-all hover:bg-white/10" data-index="${i}">
+              <span class="text-blue-500 font-bold flex-shrink-0 w-6">${i + 1}.</span>
+              <p class="text-slate-200 flex-grow pr-8">${item}</p>
+              <button class="delete-item absolute right-4 top-4 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-1" title="Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+              </button>
+            </li>
+          `).join('')}
+        </ul>
+      </div>
+      <div class="flex flex-col gap-4 flex-shrink-0">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <button id="add-more-btn" class="py-4 bg-white/5 text-blue-400 font-bold rounded-xl border border-blue-500/20 hover:bg-blue-500/10 transition-all flex items-center justify-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            ${isJP ? '項目を更に追加' : 'Add More Points'}
+          </button>
+          <button id="re-out-btn" class="py-4 bg-white/5 text-slate-300 font-bold rounded-xl border border-white/10 hover:text-white transition-all">
+            ${isJP ? '構成案を再生成' : 'Regenerate Entire Outline'}
+          </button>
+        </div>
+        <button id="gen-btn" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-5 rounded-xl shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+          ${isJP ? 'ポッドキャストを生成' : 'Generate Podcast'}
+        </button>
       </div>
     `;
+
     div.querySelector('#back-btn')!.addEventListener('click', () => this.setState({ step: 'input' }));
     div.querySelector('#re-out-btn')!.addEventListener('click', () => {
       this.startOutlineGeneration(this.state.topic);
     });
+    div.querySelector('#add-more-btn')!.addEventListener('click', () => {
+      this.extendOutline();
+    });
+    
+    div.querySelectorAll('.delete-item').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const li = (e.currentTarget as HTMLElement).closest('li');
+        const index = parseInt(li?.dataset.index || '-1');
+        if (index > -1) {
+          const newOutline = [...this.state.outline];
+          newOutline.splice(index, 1);
+          this.setState({ outline: newOutline });
+        }
+      });
+    });
+
     div.querySelector('#gen-btn')!.addEventListener('click', async () => {
-      const msg = this.state.language === Language.JAPANESE ? '音声生成中...' : 'Generating audio...';
+      if (this.state.outline.length === 0) {
+        alert(isJP ? '項目を1つ以上追加してください' : 'Please add at least one point');
+        return;
+      }
+      const msg = isJP ? '音声生成中...' : 'Generating audio...';
       this.setState({ step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
       try {
         const { transcript, sources } = await this.service.generateScript(this.state.topic, this.state.outline, this.state.language);
@@ -243,7 +338,7 @@ class App {
         <div class="w-full max-w-md bg-white/5 rounded-full h-2 overflow-hidden border border-white/10 mt-4">
           <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" style="width: ${this.state.progress}%"></div>
         </div>
-        <p class="mt-4 text-[10px] text-slate-500 uppercase tracking-widest">${this.state.progress}% Complete</p>
+        <p class="mt-4 text-[10px] text-slate-500 uppercase tracking-widest">${Math.round(this.state.progress)}% Complete</p>
       ` : ''}
     `;
     return div;
@@ -292,7 +387,7 @@ class App {
         </div>
       </div>
     `;
-    div.querySelector('#new-btn')!.addEventListener('click', () => this.setState({ step: 'input', session: null, topic: '' }));
+    div.querySelector('#new-btn')!.addEventListener('click', () => this.setState({ step: 'input', session: null, topic: '', selectedGenre: null, genreTopics: [] }));
     div.querySelector('#download-btn')!.addEventListener('click', () => {
       const a = document.createElement('a');
       a.href = this.state.session.audioUrl;

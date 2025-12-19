@@ -20,11 +20,31 @@ export class GeminiPodcastService {
     this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
+  async getTopicsByGenre(genre: string, language: Language): Promise<string[]> {
+    const langLabel = language === Language.JAPANESE ? "Japanese" : "English";
+    const response = await this.ai.models.generateContent({
+      model: MODEL_TEXT,
+      contents: `You are a podcast producer. For the genre "${genre}", suggest 5 specific and highly engaging podcast episode topics in ${langLabel}. Format as JSON array of strings.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    });
+    try {
+      return JSON.parse(response.text || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
   async generateOutline(topic: string, language: Language): Promise<string[]> {
     const langLabel = language === Language.JAPANESE ? "Japanese" : "English";
     const response = await this.ai.models.generateContent({
       model: MODEL_TEXT,
-      contents: `You are a podcast content strategist. For the topic "${topic}", create a concise outline for a deep-dive podcast episode in ${langLabel}. List 5 key points. Format as JSON array of strings.`,
+      contents: `You are a podcast content strategist. For the topic "${topic}", create a comprehensive outline for a deep-dive podcast episode in ${langLabel}. List 10 key points. Format as JSON array of strings.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -40,17 +60,42 @@ export class GeminiPodcastService {
     }
   }
 
+  async extendOutline(topic: string, currentOutline: string[], language: Language): Promise<string[]> {
+    const langLabel = language === Language.JAPANESE ? "Japanese" : "English";
+    const response = await this.ai.models.generateContent({
+      model: MODEL_TEXT,
+      contents: `You are a podcast content strategist. For the topic "${topic}", the current outline is: ${JSON.stringify(currentOutline)}. 
+      Add 5 more unique, engaging, and different points to this podcast outline that haven't been mentioned yet. 
+      Language: ${langLabel}. Format as JSON array of strings.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        }
+      }
+    });
+    try {
+      return JSON.parse(response.text || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
   async generateScript(topic: string, outline: string[], language: Language): Promise<ScriptResult> {
     const langLabel = language === Language.JAPANESE ? "Japanese" : "English";
     
     const personaInstr = `
     Roles:
-    - Joe: A curious novice. He doesn't know much but is eager to learn. He asks lots of questions and reacts with surprise.
-    - Jane: A friendly expert. She explains simply first, then builds up to the complex exciting parts.
-    
-    Tone:
-    - Start with light casual banter.
-    - Exaggerate emotions/excitement at key technical or shocking parts.
+    - Joe (The Curious Listener): Enthusiastic, asks "Why?" and "How?", interjects frequently to break up long monologues. He provides "Aizuchi" (back-channeling).
+    - Jane (The Expert): Explains clearly, uses analogies, and loves correcting common myths.
+
+    Rules for Script Quality:
+    1. TARGET LENGTH: Generate an extremely detailed and long script. Each outline point should be discussed for multiple turns.
+    2. INTERACTIVITY: Jane must not speak for more than 3 sentences without Joe interjecting (e.g., "Wait, so...", "I see!", "Really?").
+    3. DEFINITIONS: Jane must define any jargon, acronyms, or complex terms immediately.
+    4. MYTH BUSTING: For each point, Jane should mention a "Common Misconception" or "Mistake people often make."
+    5. HUMOR: Include light-hearted banter and reactions.
     `;
 
     const extraInstr = language === Language.JAPANESE 
@@ -59,7 +104,7 @@ export class GeminiPodcastService {
 
     const response = await this.ai.models.generateContent({
       model: MODEL_TEXT,
-      contents: `Expert podcast producer. Topic: "${topic}". Language: ${langLabel}. Outline: ${outline.join(', ')}. ${personaInstr} ${extraInstr} 15-min style. JSON output: { "transcript": [{ "speaker": "Joe"|"Jane", "text": "..." }] }`,
+      contents: `Expert podcast producer. Topic: "${topic}". Language: ${langLabel}. Outline: ${outline.join(', ')}. ${personaInstr} ${extraInstr} Generate a comprehensive 15-minute dialogue equivalent. JSON output: { "transcript": [{ "speaker": "Joe"|"Jane", "text": "..." }] }`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
