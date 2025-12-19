@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { PodcastTurn, Speaker, Voice, Language } from "../types";
 
-const MODEL_TEXT = 'gemini-3-pro-preview';
+const MODEL_TEXT = 'gemini-3-flash-preview';
 const MODEL_TTS = 'gemini-2.5-flash-preview-tts';
 
 export interface ScriptResult {
