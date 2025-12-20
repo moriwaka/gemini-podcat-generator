@@ -1,7 +1,5 @@
 {
   "name": "Gemini Podcast Studio",
   "description": "An AI-powered podcast generator that creates high-quality two-person discussions on any topic using the Gemini multi-speaker TTS model.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
+  "requestFramePermissions": []
 }
