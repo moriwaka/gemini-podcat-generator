@@ -83,17 +83,20 @@ class App {
     }
   }
 
+  private cleanTextForDisplay(text: string): string {
+    // 日本語の読み仮名（全角・半角括弧）を除去する正規表現
+    return text.replace(/[（\(][^）\)]+[）\)]/g, '');
+  }
+
   private async fetchTopicsForGenre(genre: string) {
     this.setState({ selectedGenre: genre, isGenreLoading: true, genreTopics: [] });
     
-    // ジャンル選択直後にスクロール（ローダーが見えるように）
     this.scrollToTopics();
 
     try {
       const topics = await this.service.getTopicsByGenre(genre, this.state.language);
       this.setState({ genreTopics: topics, isGenreLoading: false });
       
-      // トピック取得完了後に再度スクロール（一覧が確実に見えるように）
       setTimeout(() => this.scrollToTopics(), 50);
     } catch (err) {
       console.error(err);
@@ -175,15 +178,15 @@ class App {
       <h1 class="app-title">Gemini Podcast Studio</h1>
       <p class="app-subtitle">
         ${this.state.language === Language.JAPANESE 
-          ? 'Joe（聞き手）とJane（解説者）による、深く鋭いポッドキャスト生成ツール。' 
-          : 'Detailed podcast discussions between Joe and Jane.'}
+          ? '確かなソースに基づく深い対話を、ポッドキャスト形式で。JaneとJoeが、納得のいくまで語り合います。' 
+          : 'Grounded deep-dives in podcast form. Jane and Joe explore authoritative insights through natural dialogue.'}
       </p>
     `;
     this.container.appendChild(header);
 
     const main = document.createElement('div');
     main.className = 'fade-in' + (this.state.step === 'input' ? ' w-full' : ' main-content');
-    if (this.state.step !== 'input') main.style.maxWidth = '900px';
+    if (this.state.step !== 'input') main.style.maxWidth = '1000px';
 
     if (this.state.step === 'input') {
       main.appendChild(this.renderInputStep());
@@ -200,9 +203,9 @@ class App {
     const footer = document.createElement('footer');
     footer.className = 'app-footer';
     footer.innerHTML = `
-      <p>Gemini Multi-Speaker System • High Quality Audio Mode</p>
+      <p>Gemini Multi-Speaker System • Authority-Grounded Deep Dive</p>
       <div class="footer-speakers">
-        <span>Joe (Puck) / Jane (Kore)</span>
+        <span>Jane (The Curator) / Joe (The Inquirer)</span>
       </div>
     `;
     this.container.appendChild(footer);
@@ -228,9 +231,9 @@ class App {
     const form = document.createElement('form');
     form.className = 'form-container';
     form.innerHTML = `
-      <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${isJP ? 'トピックを入力またはジャンルから選択...' : 'Enter topic or select genre...'}" class="input-text shadow-xl" />
+      <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${isJP ? '理解を深めたいテーマを入力...' : 'Enter a topic for deep exploration...'}" class="input-text shadow-xl" />
       <button type="submit" id="submit-btn" class="btn-primary form-submit-btn">
-        ${isJP ? '構成を作成' : 'Create Outline'}
+        ${isJP ? '深掘りを開始' : 'Start Deep Dive'}
       </button>
     `;
     form.addEventListener('submit', async (e) => {
@@ -243,7 +246,7 @@ class App {
     const genreSection = document.createElement('div');
     genreSection.className = 'w-full';
     genreSection.innerHTML = `
-      <h3 class="section-label">${isJP ? 'ジャンルからトピックを探す' : 'Discover Topics by Genre'}</h3>
+      <h3 class="section-label">${isJP ? 'ジャンルからテーマを探す' : 'Discover Themes by Genre'}</h3>
       <div class="genre-grid">
         ${this.genres[this.state.language].map(g => `
           <button class="genre-btn ${this.state.selectedGenre === g ? 'active' : ''}" data-genre="${g}">${g}</button>
@@ -257,13 +260,13 @@ class App {
 
     if (this.state.selectedGenre) {
       const topicsDiv = document.createElement('div');
-      topicsDiv.id = 'genre-topics-section'; // スクロール用のIDを付与
+      topicsDiv.id = 'genre-topics-section';
       topicsDiv.className = 'glass-card outline-inner slide-up';
       topicsDiv.style.width = '100%';
       topicsDiv.style.marginBottom = '3.5rem';
       topicsDiv.innerHTML = `
         <div class="outline-header">
-          <h4 class="outline-title" style="font-size: 1rem; color: #60a5fa;">${this.state.selectedGenre} のおすすめ</h4>
+          <h4 class="outline-title" style="font-size: 1rem; color: #60a5fa;">${this.state.selectedGenre} のトピック例</h4>
           ${this.state.isGenreLoading ? '<div class="loading-spinner" style="width:1.5rem;height:1.5rem;margin:0;border-width:2px;"></div>' : ''}
         </div>
         <div class="outline-controls">
@@ -287,7 +290,7 @@ class App {
       const historySection = document.createElement('div');
       historySection.className = 'w-full';
       historySection.innerHTML = `
-        <h3 class="section-label">${isJP ? '最近の生成履歴' : 'Recent Episodes'}</h3>
+        <h3 class="section-label">${isJP ? '最近の探索履歴' : 'Recent Explorations'}</h3>
         <div class="history-grid">
           ${this.state.history.map(session => `
             <div class="history-card">
@@ -348,7 +351,7 @@ class App {
     div.innerHTML = `
       <div class="outline-inner">
         <div class="outline-header">
-          <h2 class="outline-title">${isJP ? '番組構成案' : 'Proposed Outline'}</h2>
+          <h2 class="outline-title">${isJP ? '深掘り構成' : 'Deep Dive Plan'}</h2>
           <button id="back-btn" class="btn-secondary" style="border:none; background:transparent;">${isJP ? '戻る' : 'Back'}</button>
         </div>
         <div class="outline-list custom-scrollbar">
@@ -403,10 +406,9 @@ class App {
       this.audioContext = null;
 
       try {
-        const scriptMsg = isJP ? '台本を執筆中...' : 'Writing script...';
+        const scriptMsg = isJP ? 'リサーチを行い、対話を執筆中...' : 'Researching and writing script...';
         this.setState({ loadingStep: scriptMsg, progress: 10 });
 
-        // 1. 台本を一括で生成
         const fullScriptResult = await this.service.generateFullScript(
           this.state.topic, 
           this.state.outline, 
@@ -419,8 +421,6 @@ class App {
 
         this.setState({ progress: 40 });
 
-        // 2. 音声を分割して合成
-        // ひずみを防ぐため、会話を10〜12ターンずつのチャンクに分けて処理
         const CHUNK_TURN_SIZE = 12;
         const transcript = fullScriptResult.transcript;
         const totalTurns = transcript.length;
@@ -438,8 +438,6 @@ class App {
           if (base64Audio) {
             await this.playAudioChunk(base64Audio);
           } else {
-            // 音声作成が失敗（nullが返った）した場合は、リトライオーバーかレート制限
-            // 続きを作らずにエラールート（catch）へ
             throw new Error("Audio synthesis failed mid-process.");
           }
         }
@@ -467,7 +465,6 @@ class App {
         });
       } catch (err) {
         console.error("Podcast Generation Error:", err);
-        // エラールートへ：オーディオステータスを失敗に設定し、結果画面へ遷移
         this.setState({ 
           step: 'result', 
           session: this.state.session || { transcript: [], sources: [], audioUrl: null }, 
@@ -509,10 +506,12 @@ class App {
         <div class="audio-error-box">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #f87171;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
           <p style="font-size: 0.8rem; font-weight: 600; color: #f87171; margin-top: 0.5rem;">${isJP ? '生成に失敗しました' : 'Generation failed'}</p>
-          <p style="font-size: 0.7rem; color: #94a3b8; margin-top: 0.25rem; line-height: 1.4;">${isJP ? '利用制限（1日10回程度）に達したか、通信が中断されました。' : 'API rate limit reached or connection interrupted.'}</p>
+          <p style="font-size: 0.7rem; color: #94a3b8; margin-top: 0.25rem; line-height: 1.4;">${isJP ? '利用制限に達したか、通信が中断されました。' : 'API rate limit reached or connection interrupted.'}</p>
         </div>
       `;
     }
+
+    const sources = this.state.session?.sources || [];
 
     div.innerHTML = `
       <div class="result-main">
@@ -524,8 +523,8 @@ class App {
             ${this.state.session && this.state.session.transcript && this.state.session.transcript.length > 0 ? 
               this.state.session.transcript.map((turn: any) => `
               <div class="message-bubble ${turn.speaker === 'Joe' ? 'bubble-joe' : 'bubble-jane'}">
-                <span class="bubble-speaker">${turn.speaker}</span>
-                <p class="bubble-text">${turn.text}</p>
+                <span class="bubble-speaker">${turn.speaker === 'Joe' ? 'Joe (Inquirer)' : 'Jane (The Curator)'}</span>
+                <p class="bubble-text">${this.cleanTextForDisplay(turn.text)}</p>
               </div>
             `).join('') : `<p style="text-align:center; padding: 2rem; opacity:0.5;">${isJP ? '台本がありません' : 'No transcript available'}</p>`}
           </div>
@@ -551,8 +550,60 @@ class App {
             <button id="new-btn" class="btn-secondary" style="font-size: 0.75rem; text-transform: uppercase;">New Episode</button>
           </div>
         </div>
+
+        ${sources.length > 0 ? `
+          <div class="glass-card" style="margin-top: 2rem; padding: 2rem;">
+            <p class="section-label" style="text-align: left; margin-bottom: 1.5rem;">Sources / References</p>
+            <div style="display: flex; flex-direction: column; gap: 1rem; text-align: left;">
+              ${sources.map((s: any) => `
+                <a href="${s.uri}" target="_blank" rel="noopener noreferrer" class="source-link">
+                  <span class="source-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  </span>
+                  <span class="source-title">${s.title}</span>
+                </a>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
       </div>
     `;
+
+    // インラインスタイルの補完
+    const style = document.createElement('style');
+    style.textContent = `
+      .source-link {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        border-radius: 0.75rem;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        text-decoration: none;
+        color: #94a3b8;
+        transition: all 0.2s;
+      }
+      .source-link:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(59, 130, 246, 0.3);
+        color: #60a5fa;
+        transform: translateX(4px);
+      }
+      .source-icon {
+        color: #64748b;
+        flex-shrink: 0;
+      }
+      .source-title {
+        font-size: 0.8rem;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    `;
+    div.appendChild(style);
+
     div.querySelector('#new-btn')!.addEventListener('click', () => this.setState({ step: 'input', session: null, topic: '', selectedGenre: null, genreTopics: [], audioStatus: 'none' }));
     
     const downloadBtn = div.querySelector('#download-btn');

@@ -49,7 +49,7 @@ export class GeminiPodcastService {
     return this.callWithRetry(async () => {
       const response = await this.ai.models.generateContent({
         model: MODEL_TEXT,
-        contents: `You are a podcast producer. For the genre "${genre}", suggest 5 specific and highly engaging podcast episode topics in ${langLabel}. Format as JSON array of strings.`,
+        contents: `You are a podcast producer. For the genre "${genre}", suggest 5 deep, researchable podcast topics in ${langLabel} that involve complex scientific or social mechanisms. Format as JSON array of strings.`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -109,7 +109,7 @@ export class GeminiPodcastService {
     return this.callWithRetry(async () => {
       const response = await this.ai.models.generateContent({
         model: MODEL_TEXT,
-        contents: getFullScriptPrompt(topic, outline, langLabel) + extraInstr,
+        contents: `Research task: Gather facts from peer-reviewed papers, official government reports, and standard textbooks. \nDialogue task: Mention specific sources naturally. CRITICAL: Joe must act as a filter for a high school-level audience. He MUST interrupt Jane whenever she uses unexplained jargon or complex concepts. Jane must respond with analogies.\n\n` + getFullScriptPrompt(topic, outline, langLabel) + extraInstr,
         config: {
           tools: [{ googleSearch: {} }],
           responseMimeType: "application/json",
@@ -187,9 +187,6 @@ export class GeminiPodcastService {
     }
   }
 
-  /**
-   * @deprecated Used in older versions. Prefer segmented audio calls.
-   */
   async streamAudioInChunks(
     transcript: PodcastTurn[], 
     onChunk: (base64: string) => void,
