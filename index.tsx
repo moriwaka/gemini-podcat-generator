@@ -15,8 +15,7 @@ class App {
   private state: {
     topic: string;
     language: Language;
-    step: 'input' | 'outline' | 'generating' | 'result';
-    outline: string[];
+    step: 'input' | 'generating' | 'result';
     isLoading: boolean;
     loadingStep: string;
     progress: number;
@@ -27,6 +26,7 @@ class App {
     isStreaming: boolean;
     history: SavedSession[];
     audioStatus: 'success' | 'partial' | 'failed' | 'none';
+    showReadings: boolean;
   };
 
   private genres = {
@@ -50,7 +50,6 @@ class App {
       topic: '',
       language: Language.JAPANESE,
       step: 'input',
-      outline: [],
       isLoading: false,
       loadingStep: '',
       progress: 0,
@@ -60,7 +59,8 @@ class App {
       isGenreLoading: false,
       isStreaming: false,
       history: [],
-      audioStatus: 'none'
+      audioStatus: 'none',
+      showReadings: false
     };
     this.init();
   }
@@ -84,50 +84,20 @@ class App {
   }
 
   private cleanTextForDisplay(text: string): string {
-    // 日本語の読み仮名（全角・半角括弧）を除去する正規表現
-    return text.replace(/[（\(][^）\)]+[）\)]/g, '');
+    if (this.state.showReadings) return text;
+    return text.replace(/[（\(][^）\)]+[）\)]/g, '').replace(/\s{2,}/g, ' ').trim();
   }
 
   private async fetchTopicsForGenre(genre: string) {
     this.setState({ selectedGenre: genre, isGenreLoading: true, genreTopics: [] });
-    
     this.scrollToTopics();
-
     try {
       const topics = await this.service.getTopicsByGenre(genre, this.state.language);
       this.setState({ genreTopics: topics, isGenreLoading: false });
-      
       setTimeout(() => this.scrollToTopics(), 50);
     } catch (err) {
       console.error(err);
       this.setState({ isGenreLoading: false });
-    }
-  }
-
-  private async startOutlineGeneration(topic: string) {
-    if (!topic.trim()) return;
-    const msg = this.state.language === Language.JAPANESE ? '構成を作成中...' : 'Generating outline...';
-    this.setState({ topic, step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
-    try {
-      const outline = await this.service.generateOutline(topic, this.state.language);
-      this.setState({ outline, step: 'outline', isLoading: false, loadingStep: '' });
-    } catch (err) {
-      console.error(err);
-      alert('Error generating outline. Please try again later.');
-      this.setState({ step: 'input', isLoading: false, loadingStep: '' });
-    }
-  }
-
-  private async extendOutline() {
-    const msg = this.state.language === Language.JAPANESE ? '項目を追加中...' : 'Adding more points...';
-    this.setState({ step: 'generating', isLoading: true, loadingStep: msg, progress: 0 });
-    try {
-      const moreItems = await this.service.extendOutline(this.state.topic, this.state.outline, this.state.language);
-      this.setState({ outline: [...this.state.outline, ...moreItems], step: 'outline', isLoading: false, loadingStep: '' });
-    } catch (err) {
-      console.error(err);
-      alert('Error extending outline. Rate limits might have been reached.');
-      this.setState({ step: 'outline', isLoading: false, loadingStep: '' });
     }
   }
 
@@ -136,15 +106,12 @@ class App {
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       this.nextStartTime = this.audioContext.currentTime;
     }
-
     const pcmBytes = decodeBase64(base64);
     this.audioChunks.push(pcmBytes);
-
     const buffer = await decodeRawPcm(pcmBytes, this.audioContext);
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(this.audioContext.destination);
-
     this.nextStartTime = Math.max(this.nextStartTime, this.audioContext.currentTime);
     source.start(this.nextStartTime);
     this.nextStartTime += buffer.duration;
@@ -166,9 +133,95 @@ class App {
     this.setState({ history });
   }
 
+  private async startFullGeneration(topic: string) {
+    if (!topic.trim()) return;
+    const isJP = this.state.language === Language.JAPANESE;
+    
+    this.setState({ 
+      topic, 
+      step: 'generating', 
+      isLoading: true, 
+      loadingStep: isJP ? '構成を作成中...' : 'Planning the conversation...', 
+      progress: 5 
+    });
+
+    this.audioChunks = [];
+    this.audioContext = null;
+
+    try {
+      // Step 1: Generate Outline (Internal)
+      const outline = await this.service.generateOutline(topic, this.state.language);
+      this.setState({ 
+        progress: 15, 
+        loadingStep: isJP ? 'リサーチを行い、台本を執筆中...' : 'Researching and writing script...' 
+      });
+
+      // Step 2: Generate Full Script
+      const fullScriptResult = await this.service.generateFullScript(
+        topic, 
+        outline, 
+        this.state.language
+      );
+
+      if (!fullScriptResult.transcript || fullScriptResult.transcript.length === 0) {
+        throw new Error("Script generation returned empty.");
+      }
+
+      this.setState({ progress: 40 });
+
+      // Step 3: Audio Synthesis in Chunks
+      const CHUNK_TURN_SIZE = 12;
+      const transcript = fullScriptResult.transcript;
+      const totalTurns = transcript.length;
+
+      for (let i = 0; i < totalTurns; i += CHUNK_TURN_SIZE) {
+        const chunk = transcript.slice(i, i + CHUNK_TURN_SIZE);
+        const currentProgress = 40 + Math.floor((i / totalTurns) * 60);
+        
+        const audioMsg = isJP 
+          ? `音声を合成中 (${Math.round((i / totalTurns) * 100)}%)...` 
+          : `Synthesizing voices (${Math.round((i / totalTurns) * 100)}%)...`;
+        this.setState({ loadingStep: audioMsg, progress: currentProgress });
+
+        const base64Audio = await this.service.generateAudioForSegment(chunk);
+        if (base64Audio) {
+          await this.playAudioChunk(base64Audio);
+        } else {
+          throw new Error("Audio synthesis failed mid-process.");
+        }
+      }
+
+      // Finalize audio and save
+      let audioUrl = null;
+      if (this.audioChunks.length > 0) {
+        const totalSize = this.audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+        const mergedPcm = new Uint8Array(totalSize);
+        let offset = 0;
+        for (const chunk of this.audioChunks) {
+          mergedPcm.set(chunk, offset);
+          offset += chunk.length;
+        }
+        const wavBlob = pcmToWav(mergedPcm);
+        audioUrl = URL.createObjectURL(wavBlob);
+        await this.saveCurrentSession(fullScriptResult.transcript, fullScriptResult.sources, wavBlob);
+      }
+
+      this.setState({ 
+        step: 'result', 
+        session: { transcript: fullScriptResult.transcript, sources: fullScriptResult.sources, audioUrl }, 
+        isLoading: false, 
+        audioStatus: this.audioChunks.length > 0 ? 'success' : 'failed'
+      });
+
+    } catch (err) {
+      console.error("Podcast Generation Error:", err);
+      alert('Error generating podcast. Please try again.');
+      this.setState({ step: 'input', isLoading: false });
+    }
+  }
+
   private render() {
     this.container.innerHTML = '';
-    
     const header = document.createElement('header');
     header.className = 'app-header';
     header.innerHTML = `
@@ -178,8 +231,8 @@ class App {
       <h1 class="app-title">Gemini Podcast Studio</h1>
       <p class="app-subtitle">
         ${this.state.language === Language.JAPANESE 
-          ? '確かなソースに基づく深い対話を、ポッドキャスト形式で。JaneとJoeが、納得のいくまで語り合います。' 
-          : 'Grounded deep-dives in podcast form. Jane and Joe explore authoritative insights through natural dialogue.'}
+          ? '身近な話題から深掘りする、JaneとJoeの対話型ポッドキャスト。' 
+          : 'Dive deep from everyday insights. Conversational exploration with Jane and Joe.'}
       </p>
     `;
     this.container.appendChild(header);
@@ -190,14 +243,11 @@ class App {
 
     if (this.state.step === 'input') {
       main.appendChild(this.renderInputStep());
-    } else if (this.state.step === 'outline') {
-      main.appendChild(this.renderOutlineStep());
     } else if (this.state.step === 'generating') {
       main.appendChild(this.renderGeneratingStep());
     } else if (this.state.step === 'result') {
       main.appendChild(this.renderResultStep());
     }
-
     this.container.appendChild(main);
 
     const footer = document.createElement('footer');
@@ -233,13 +283,13 @@ class App {
     form.innerHTML = `
       <input type="text" id="topic-input" value="${this.state.topic}" placeholder="${isJP ? '理解を深めたいテーマを入力...' : 'Enter a topic for deep exploration...'}" class="input-text shadow-xl" />
       <button type="submit" id="submit-btn" class="btn-primary form-submit-btn">
-        ${isJP ? '深掘りを開始' : 'Start Deep Dive'}
+        ${isJP ? 'ポッドキャストを生成' : 'Generate Podcast'}
       </button>
     `;
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const input = form.querySelector('#topic-input') as HTMLInputElement;
-      this.startOutlineGeneration(input.value);
+      this.startFullGeneration(input.value);
     });
     div.appendChild(form);
 
@@ -343,140 +393,6 @@ class App {
     return div;
   }
 
-  private renderOutlineStep() {
-    const div = document.createElement('div');
-    div.className = 'glass-card outline-view slide-up';
-    const isJP = this.state.language === Language.JAPANESE;
-    
-    div.innerHTML = `
-      <div class="outline-inner">
-        <div class="outline-header">
-          <h2 class="outline-title">${isJP ? '深掘り構成' : 'Deep Dive Plan'}</h2>
-          <button id="back-btn" class="btn-secondary" style="border:none; background:transparent;">${isJP ? '戻る' : 'Back'}</button>
-        </div>
-        <div class="outline-list custom-scrollbar">
-          ${this.state.outline.map((item, i) => `
-            <div class="outline-item" data-index="${i}">
-              <span class="outline-number">${i + 1}</span>
-              <p class="outline-text">${item}</p>
-              <button class="btn-delete delete-item" title="Delete">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-              </button>
-            </div>
-          `).join('')}
-        </div>
-        <div class="outline-controls">
-          <div class="outline-row">
-            <button id="add-more-btn" class="btn-secondary">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              ${isJP ? '項目を追加' : 'Add Points'}
-            </button>
-            <button id="re-out-btn" class="btn-secondary">
-              ${isJP ? '再構成' : 'Regenerate'}
-            </button>
-          </div>
-          <button id="gen-btn" class="btn-primary" style="padding: 1.5rem; font-size: 1.1rem;">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
-            ${isJP ? 'ポッドキャストを生成' : 'Generate Podcast'}
-          </button>
-        </div>
-      </div>
-    `;
-
-    div.querySelector('#back-btn')!.addEventListener('click', () => this.setState({ step: 'input' }));
-    div.querySelector('#re-out-btn')!.addEventListener('click', () => this.startOutlineGeneration(this.state.topic));
-    div.querySelector('#add-more-btn')!.addEventListener('click', () => this.extendOutline());
-    div.querySelectorAll('.delete-item').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const itemEl = (e.currentTarget as HTMLElement).closest('.outline-item') as HTMLElement | null;
-        const index = parseInt(itemEl?.dataset.index || '-1');
-        if (index > -1) {
-          const newOutline = [...this.state.outline];
-          newOutline.splice(index, 1);
-          this.setState({ outline: newOutline });
-        }
-      });
-    });
-
-    div.querySelector('#gen-btn')!.addEventListener('click', async () => {
-      if (this.state.outline.length === 0) return;
-      
-      this.setState({ step: 'generating', isLoading: true, progress: 0, isStreaming: false });
-      this.audioChunks = [];
-      this.audioContext = null;
-
-      try {
-        const scriptMsg = isJP ? 'リサーチを行い、対話を執筆中...' : 'Researching and writing script...';
-        this.setState({ loadingStep: scriptMsg, progress: 10 });
-
-        const fullScriptResult = await this.service.generateFullScript(
-          this.state.topic, 
-          this.state.outline, 
-          this.state.language
-        );
-
-        if (!fullScriptResult.transcript || fullScriptResult.transcript.length === 0) {
-          throw new Error("Script generation returned empty.");
-        }
-
-        this.setState({ progress: 40 });
-
-        const CHUNK_TURN_SIZE = 12;
-        const transcript = fullScriptResult.transcript;
-        const totalTurns = transcript.length;
-
-        for (let i = 0; i < totalTurns; i += CHUNK_TURN_SIZE) {
-          const chunk = transcript.slice(i, i + CHUNK_TURN_SIZE);
-          const currentProgress = 40 + Math.floor((i / totalTurns) * 60);
-          
-          const audioMsg = isJP 
-            ? `音声を合成中 (${Math.round((i / totalTurns) * 100)}%)...` 
-            : `Synthesizing audio (${Math.round((i / totalTurns) * 100)}%)...`;
-          this.setState({ loadingStep: audioMsg, progress: currentProgress });
-
-          const base64Audio = await this.service.generateAudioForSegment(chunk);
-          if (base64Audio) {
-            await this.playAudioChunk(base64Audio);
-          } else {
-            throw new Error("Audio synthesis failed mid-process.");
-          }
-        }
-
-        let audioUrl = null;
-        if (this.audioChunks.length > 0) {
-          const totalSize = this.audioChunks.reduce((acc, chunk) => acc + chunk.length, 0);
-          const mergedPcm = new Uint8Array(totalSize);
-          let offset = 0;
-          for (const chunk of this.audioChunks) {
-            mergedPcm.set(chunk, offset);
-            offset += chunk.length;
-          }
-          const wavBlob = pcmToWav(mergedPcm);
-          audioUrl = URL.createObjectURL(wavBlob);
-          await this.saveCurrentSession(fullScriptResult.transcript, fullScriptResult.sources, wavBlob);
-        }
-
-        this.setState({ 
-          step: 'result', 
-          session: { transcript: fullScriptResult.transcript, sources: fullScriptResult.sources, audioUrl }, 
-          isLoading: false, 
-          isStreaming: false,
-          audioStatus: this.audioChunks.length > 0 ? 'success' : 'failed'
-        });
-      } catch (err) {
-        console.error("Podcast Generation Error:", err);
-        this.setState({ 
-          step: 'result', 
-          session: this.state.session || { transcript: [], sources: [], audioUrl: null }, 
-          isLoading: false, 
-          isStreaming: false,
-          audioStatus: 'failed'
-        });
-      }
-    });
-    return div;
-  }
-
   private renderGeneratingStep() {
     const div = document.createElement('div');
     div.className = 'generating-view';
@@ -512,12 +428,14 @@ class App {
     }
 
     const sources = this.state.session?.sources || [];
-
     div.innerHTML = `
       <div class="result-main">
         <div class="glass-card transcript-inner">
           <div class="outline-header">
             <span class="section-label" style="margin: 0;">EPISODE TRANSCRIPT</span>
+            <button id="toggle-readings" class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.7rem; font-weight: 600;">
+              ${this.state.showReadings ? (isJP ? '読みを隠す' : 'Hide Readings') : (isJP ? '読みを表示' : 'Show Readings')}
+            </button>
           </div>
           <div class="transcript-scroll custom-scrollbar">
             ${this.state.session && this.state.session.transcript && this.state.session.transcript.length > 0 ? 
@@ -537,9 +455,7 @@ class App {
           </div>
           <h3 class="topic-display">${this.state.topic}</h3>
           <p class="section-label" style="font-size: 0.6rem; margin-bottom: 2rem;">Episode Ready</p>
-          
           ${audioPlayerContent}
-          
           <div class="outline-controls" style="width: 100%;">
             ${this.state.session && this.state.session.audioUrl ? `
               <button id="download-btn" class="btn-primary">
@@ -550,7 +466,6 @@ class App {
             <button id="new-btn" class="btn-secondary" style="font-size: 0.75rem; text-transform: uppercase;">New Episode</button>
           </div>
         </div>
-
         ${sources.length > 0 ? `
           <div class="glass-card" style="margin-top: 2rem; padding: 2rem;">
             <p class="section-label" style="text-align: left; margin-bottom: 1.5rem;">Sources / References</p>
@@ -569,43 +484,20 @@ class App {
       </div>
     `;
 
-    // インラインスタイルの補完
     const style = document.createElement('style');
     style.textContent = `
-      .source-link {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.75rem;
-        border-radius: 0.75rem;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        text-decoration: none;
-        color: #94a3b8;
-        transition: all 0.2s;
-      }
-      .source-link:hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(59, 130, 246, 0.3);
-        color: #60a5fa;
-        transform: translateX(4px);
-      }
-      .source-icon {
-        color: #64748b;
-        flex-shrink: 0;
-      }
-      .source-title {
-        font-size: 0.8rem;
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
+      .source-link { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-radius: 0.75rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); text-decoration: none; color: #94a3b8; transition: all 0.2s; }
+      .source-link:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(59, 130, 246, 0.3); color: #60a5fa; transform: translateX(4px); }
+      .source-icon { color: #64748b; flex-shrink: 0; }
+      .source-title { font-size: 0.8rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     `;
     div.appendChild(style);
 
+    div.querySelector('#toggle-readings')!.addEventListener('click', () => {
+      this.setState({ showReadings: !this.state.showReadings });
+    });
+
     div.querySelector('#new-btn')!.addEventListener('click', () => this.setState({ step: 'input', session: null, topic: '', selectedGenre: null, genreTopics: [], audioStatus: 'none' }));
-    
     const downloadBtn = div.querySelector('#download-btn');
     if (downloadBtn) {
       downloadBtn.addEventListener('click', () => {
